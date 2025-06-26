@@ -1,0 +1,4 @@
+# ninja log v5
+1	13791	1744170834459989185	/home/t1204/Desktop/EffMambaSiam/EffSiam/models/selective_scan/build/temp.linux-x86_64-cpython-310/csrc/selective_scan/cusoflex/selective_scan_core_fwd.o	ca7cc75eabfd9943
+1	17408	1744170838077032736	/home/t1204/Desktop/EffMambaSiam/EffSiam/models/selective_scan/build/temp.linux-x86_64-cpython-310/csrc/selective_scan/cusoflex/selective_scan_oflex.o	9511868912410a1
+0	43793	1744170864460351772	/home/t1204/Desktop/EffMambaSiam/EffSiam/models/selective_scan/build/temp.linux-x86_64-cpython-310/csrc/selective_scan/cusoflex/selective_scan_core_bwd.o	d62356ecd489f6c7
