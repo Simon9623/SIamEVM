@@ -559,7 +559,8 @@ class Custom(nn.Module):
                     else:
                         new_zf += weighted_feature
                 if new_zf is not None:
-                    self.zf = new_zf.detach()
+                    # self.zf = new_zf.detach()
+                    self.zf = new_zf
 
         bbox_output = best_bbox if best_bbox is not None else bboxes[:, 0]
         mask_output = best_mask if best_mask is not None else masks[:, 0:1]

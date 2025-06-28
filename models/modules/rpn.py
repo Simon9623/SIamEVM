@@ -165,8 +165,8 @@ class DepthCorr(nn.Module):
         return feature
 
     def forward(self, kernel, search):
-        with torch.no_grad():  # 減少不必要的梯度計算
-            feature = self.forward_corr(kernel, search)
+        # 直接調用，讓梯度可以正常回傳
+        feature = self.forward_corr(kernel, search)
         out = self.head(feature)
         out = torch.clamp(out, min=-1e4, max=1e4)
         return out

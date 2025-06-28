@@ -1,3 +1,4 @@
+
 import os
 import time
 import argparse
@@ -198,6 +199,8 @@ class CustomDataset(Dataset):
         self.split = split
         self.template_transform = template_transform
         self.search_transform = search_transform
+        # 新增一個屬性來判斷是否為訓練模式，以決定是否啟用幾何增強
+        self.is_train = 'train' in split
         self.videos = []
         self.cache_images = cache_images
         self.image_cache = {}
@@ -266,8 +269,8 @@ class CustomDataset(Dataset):
         
         try:
             if self.cache_images and template_img_path in self.image_cache and search_img_path in self.image_cache:
-                template_img = self.image_cache[template_img_path]
-                search_img = self.image_cache[search_img_path]
+                template_img = self.image_cache[template_img_path].copy()
+                search_img = self.image_cache[search_img_path].copy()
             else:
                 template_img = Image.open(template_img_path).convert('RGB')
                 search_img = Image.open(search_img_path).convert('RGB')
@@ -277,6 +280,33 @@ class CustomDataset(Dataset):
             logging.warning(f"Error loading data at index {idx}: {e}")
             return self.__getitem__(random.randint(0, len(self.videos) - 1))
 
+        # ==================== 新增：數據增強邏輯 ====================
+        # 只在訓練模式下進行幾何增強
+        if self.is_train:
+            # 1. 隨機水平翻轉 (同步應用於圖片和遮罩)
+            if random.random() > 0.5:
+                search_img = transforms.functional.hflip(search_img)
+                search_mask = transforms.functional.hflip(search_mask)
+
+            # 2. 隨機仿射變換 (旋轉、平移、縮放，同步應用)
+            # 首先獲取隨機變換的參數
+            affine_params = transforms.RandomAffine.get_params(
+                degrees=(-15, 15),           # 旋轉角度範圍
+                translate=(0.1, 0.1),      # 水平和垂直平移比例
+                scale_ranges=(0.9, 1.1),   # 縮放比例範圍
+                shears=None,               # 不進行裁剪
+                img_size=search_img.size   # 圖片原始尺寸
+            )
+            # 使用相同的參數分別對圖片和遮罩進行變換
+            # 圖片使用雙線性插值，效果更平滑
+            search_img = transforms.functional.affine(search_img, *affine_params, 
+                                                      interpolation=transforms.InterpolationMode.BILINEAR)
+            # 遮罩必須使用最近鄰插值，以保持標籤值(0或255)不變
+            search_mask = transforms.functional.affine(search_mask, *affine_params, 
+                                                       interpolation=transforms.InterpolationMode.NEAREST)
+        # ==========================================================
+
+        # 應用各自的轉換流程 (包含 ToTensor, Normalize, ColorJitter等)
         if self.template_transform:
             template_img = self.template_transform(template_img)
         if self.search_transform:
@@ -288,7 +318,8 @@ class CustomDataset(Dataset):
         search_mask = F.interpolate(search_mask.unsqueeze(0), size=(256, 256), mode='nearest').squeeze(0)
 
         if template_mask.max() == 0 or search_mask.max() == 0:
-            logging.warning(f"Empty mask detected at index {idx}, returning random valid sample")
+            # 如果增強後遮罩變為空白，則重新取一個樣本
+            # logging.warning(f"Empty mask detected after augmentation at index {idx}, returning random valid sample")
             return self.__getitem__(random.randint(0, len(self.videos) - 1))
 
         template_bbox = mask_to_bbox(template_mask)
@@ -309,22 +340,36 @@ class CustomDataset(Dataset):
         }
 
 def build_data_loader(args):
+    # 範本圖片的轉換流程 (維持不變)
     template_transform = transforms.Compose([
-        transforms.Resize((128, 128)),  # Changed to 128x128
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    search_transform = transforms.Compose([
-        transforms.Resize((256, 256)),  # Changed to 256x256
+        transforms.Resize((128, 128)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
+    # 為 "訓練集" 的搜尋圖片定義新的轉換流程，加入數據增強
+    train_search_transform = transforms.Compose([
+        # 步驟 1: 顏色增強 (只對圖片作用)
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
+        # 步驟 2: 尺寸調整、轉為 Tensor 並標準化 (幾何增強後執行)
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    # "驗證集" 的搜尋圖片轉換流程 (維持原樣，不做增強)
+    val_search_transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    # 建立訓練資料集，傳入新的帶有增強的轉換流程
     train_dataset = CustomDataset(
         base_path=args.base_path,
         split='train',
         template_transform=template_transform,
-        search_transform=search_transform,
+        search_transform=train_search_transform, # 使用訓練專用的 transform
         cache_images=args.cache_images
     )
     train_loader = DataLoader(
@@ -336,11 +381,12 @@ def build_data_loader(args):
         collate_fn=custom_collate_fn
     )
 
+    # 建立驗證資料集，傳入沒有增強的轉換流程
     val_dataset = CustomDataset(
         base_path=args.base_path,
         split='val',
         template_transform=template_transform,
-        search_transform=search_transform,
+        search_transform=val_search_transform, # 使用驗證專用的 transform
         cache_images=args.cache_images
     )
     val_loader = DataLoader(
@@ -639,8 +685,8 @@ def main():
     parser.add_argument('--arch', default='Custom', type=str, help='Model architecture')
     parser.add_argument('--batch', default=4, type=int, help='Batch size')
     parser.add_argument('--accumulate_steps', default=4, type=int, help='Number of gradient accumulation steps')
-    parser.add_argument('--epochs', default=450, type=int, help='Total training epochs')
-    parser.add_argument('--lr', default=1e-5, type=float, help='Initial learning rate')
+    parser.add_argument('--epochs', default=400, type=int, help='Total training epochs')
+    parser.add_argument('--lr', default=1e-3, type=float, help='Initial learning rate')
     parser.add_argument('--lr_step', default=10, type=int, help='Learning rate step size')
     parser.add_argument('--lr_gamma', default=0.1, type=float, help='Learning rate decay factor')
     parser.add_argument('--clip', default=5.0, type=float, help='Gradient clipping value')
@@ -651,8 +697,8 @@ def main():
     parser.add_argument('--cache_images', action='store_true', help='Cache images to memory')
     parser.add_argument('--base_path', default='/home/phd-level/Desktop/SiamEVM_REV/train/datasets/DAVIS', type=str, help='DAVIS 2017 dataset root directory')
     parser.add_argument('--pretrained', default='/home/phd-level/Desktop/SiamEVM_REV/models/VSSMBackbone/vssmsmall_dp03_ckpt_epoch_238.pth', type=str, help='Pretrained model path')
-    parser.add_argument('--resume', default='/home/phd-level/Desktop/SiamEVM_REV/best_292.pth', type=str, help='Resume checkpoint path')
-    parser.add_argument('--bbox_weight', default=4.5, type=float, help='Bbox loss weight')
+    parser.add_argument('--resume', default='/home/phd-level/Desktop/SiamEVM_REV/best_19.pth', type=str, help='Resume checkpoint path')
+    parser.add_argument('--bbox_weight', default=3.5, type=float, help='Bbox loss weight')
     parser.add_argument('--mask_weight', default=5.0, type=float, help='Mask loss weight')
     parser.add_argument('--iou_weight', default=3.0, type=float, help='IoU loss weight')
     parser.add_argument('--iou_score_weight', default=2.0, type=float, help='IoU score loss weight')
