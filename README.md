@@ -1,4 +1,4 @@
-# Siamese_Based Visual Object Tracking Model
+# Siamese-Based Visual Object Tracking Model
 
 <p align="justify">
 This study presents a Siamese architecture for visual tracking (Figure). Twin backbone networks independently extract feature representations from the template and the current frame. Cross-correlating these representations produces a response map from which the target's spatial coordinates and segmentation mask are inferred.
