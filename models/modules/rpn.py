@@ -165,6 +165,7 @@ class DepthCorr(nn.Module):
         return feature
 
     def forward(self, kernel, search):
+        # with torch.no_grad(): 禁用梯度更新，這導致了 conv_kernel、conv_search、cbam_kernel、cbam_search 等所有相關性計算的核心部分權重都無法被訓練。
         # 直接調用，讓梯度可以正常回傳
         feature = self.forward_corr(kernel, search)
         out = self.head(feature)
